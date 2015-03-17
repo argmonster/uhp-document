@@ -1,4 +1,5 @@
-%define d_formpath "/c0/forms/"
+%define d_globalformpath "/c0/forms/"
+%define d_localformpath "/CUST/forms/"
 
 
 start uhp_document(parmfile, option, regid, retcode)
@@ -141,23 +142,29 @@ _INIT:
    
    'process options
    if $charx(parmfile,1) != "/" then
+      'for none absolute paths check to see if it is a system parm file first
       t = $sysname + "/PARM/" + parmfile
       if $checkfile(t) = 0 then
          getparm(parmfile)
       else
-         parmfile = d_formpath + parmfile
-         if $checkfile(parmfile) = 0 then
-            uhp_Option(parmfile)
-            if formpath !dp then
-               formpath = parmfile
+         'then check to see if it is a local uhp file
+         t = $sysname + d_localformpath + parmfile
+         if $checkfile(t) = 0 then
+            formpath = t
+            uhp_Option(t)
+         else 
+            'finally fall back to the global uhp path
+            t = d_globalformpath + parmfile
+            if $checkfile(t) = 0 then
+               formpath = t
+               uhp_Option(t)
             endif
          endif
       endif
    else
+      'just use the absolute path if that is given
+      formpath = parmfile
       uhp_Option(parmfile)
-      if formpath !dp then
-         formpath = parmfile
-      endif
    endif
    getoption(option)
 

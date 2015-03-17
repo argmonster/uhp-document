@@ -1,0 +1,270 @@
+%define d_formpath "/c0/forms/"
+
+
+start uhp_document(parmfile, option, regid, retcode)
+parmfile    is x
+option      is x
+regid       is x
+retcode     is x
+'options
+formpath    is x
+subform     is x
+reportform  is x
+
+regdb       is b
+
+save_to_dbx is x
+dbx_code1   is x
+dbx_code2   is x
+dbx_desc    is x
+
+re_display  is x
+
+b_dbx_load  is x
+-code1      is x
+-code2      is x
+-regid      is x
+-regdb      is b
+
+uhp_lib     is b
+temp-lib    is b
+b_lib[,]    is x
+
+l-dst       is b
+dstload[]   is x
+dstvalue[]  is x
+b_dst_load  is x
+snap_dst    is x
+
+objinfo[,]  is x
+txpinfo[,]  is x
+
+snap-id        is x
+
+u-note-lib[]   is b
+dbx-string     is x
+d-objinfo      is x
+d-txpinfo      is x
+
+
+b_section[]    is x
+section_act[]  is x
+section_val[]  is x
+
+l-client       is b
+temp[]         is x
+t              is x
+i              is b
+rc             is b
+
+%include inc_sysLibDef
+
+gosub _INIT
+gosub _FORM
+return
+
+'------------------------------------------------------
+_FORM:
+   do while 1 = 1
+      $clear(b_section[])
+      uhp(formpath)
+      select $endbutton
+         case "CANCEL"  gosub _EXIT
+         case "SUBMIT"  gosub _SAVE
+         case other     
+            select "Y"
+               case b_dbx_load   gosub _LOADDBX
+               case b_dst_load   gosub _LOADDST
+               case other
+                  i = $find("Y", b_section[],1,"F")
+                  if i > 0 then
+                     $parsem(section_act[i],1,":",temp[])
+                     select temp[1]
+                        case "FORM"    subform = temp[2]
+                                       gosub _SUBFORM
+                        case "SCRIPT"  call temp[2](temp[3],temp[4],temp[5],temp[6])
+                     endselect
+                  endif
+                  if $find("Y", b_lib[], 1, "F") > 0 then
+                     i = 0 
+                     temp-lib = $row_num
+                     temp-lib:submit($col_num,b_lib[$row_num],objinfo[])
+                  endif
+            endselect
+      endselect
+   enddo
+goback
+
+_SUBFORM:
+   uhp(subform)
+   select $endbutton
+      case "CANCEL"  'do nothing
+      case "SUBMIT"  objinfo[i] = section_val[]
+                     $clear(section_val[])
+   endselect
+goback
+
+_EXIT:
+   '??DRAFTS??
+   return
+goback
+
+_SAVE:
+   if reportForm dp then
+      uhp(reportForm)
+      select $endbutton
+         case "SUBMIT"
+           or "CANCEL"  goback
+         case other
+            snap-id = snap_handle:sn_getSnapID()
+            if snap-id dp then
+               gosub _WRITEDST
+               gosub _WRITEDBX
+               if re_display = "Y" then
+                  snap_handle:sn_viewsnap(snap-id)
+               endif
+               gosub _EXIT
+            else
+               '?handle snap error
+            endif
+      endselect
+   else
+      gosub _WRITEDST
+      gosub _WRITEDBX
+      gosub _EXIT
+   endif
+goback
+
+_INIT:
+   'defaults
+   regdb = 2
+   
+   'process options
+   if $charx(parmfile,1) != "/" then
+      t = $sysname + "/PARM/" + parmfile
+      if $checkfile(t) = 0 then
+         getparm(parmfile)
+      else
+         parmfile = d_formpath + parmfile
+         if $checkfile(parmfile) = 0 then
+            uhp_Option(parmfile)
+            if formpath !dp then
+               formpath = parmfile
+            endif
+         endif
+      endif
+   else
+      uhp_Option(parmfile)
+      if formpath !dp then
+         formpath = parmfile
+      endif
+   endif
+   getoption(option)
+
+   (void)$loadlib(l-client, "lib_CLIENT")
+   'get the regid
+   if regid !dp then
+      'assume it's a client
+      if l-client:pickClient(regid,"Y") > 0 then return endif
+   endif
+   'add the snap dst reference
+   if snap_dst dp then
+      (void)$arrpush(dstload[], snap_dst)
+   endif
+   'load up the dsts:
+   if dstload[] dp then
+      (void)$loadlib(l-dst, "lib_DST")
+      l-dst:setDSTs(dstload[])
+   endif
+goback
+
+_WRITEDST:
+   if dstload[] dp then
+      i = 0
+      do while i++ < $maxarray(dstload[])
+         (void)$putds(objinfo[i], t, "|")
+         if t !dp then
+            t = objinfo[i]
+         endif
+         dstvalue[i] = t
+      enddo
+      'add the snap reference
+      if snap-id dp then
+         i = $find(snap_dst, dstload[], 1, "F")
+         if i > 0 then
+            dstvalue[i] = snap-id
+         endif
+      endif
+      l-dst:add(regid, dstload[], dstvalue[])
+   endif
+goback
+
+_WRITEDBX:
+   if save_to_dbx = "Y" then
+      'set the string date - since it looks like the metadata date gets set when loading previous record
+      rc = $varptr(dbx-string)
+      (void)$putvar(rc, dbx-string, $today)
+
+      i = 0
+      do while i++ < $maxarray(objinfo[],txpinfo[])
+         d-objinfo += draft.encode(objinfo[i])
+         d-txpinfo += draft.encode(txpinfo[i])
+      enddo
+
+      dbx-string = snap-id + "|" + d-objinfo + "|" + d-txpinfo + "|"
+
+      rc = $dbxinsert(regdb, regid, dbx_code1, dbx_code2, dbx-string, dbx_desc, $operstaffid)
+      
+      if rc > 0 then
+         'handle dbx write error
+         $brmsg($fmt(rc, "dbx NOT saved 99"), 1, "WEC")
+'      else
+'         $brmsg("dbx saved", 1, "WEC")
+      endif
+   endif
+goback
+
+_LOADDBX:
+   if dbx_code1 dp and dbx_code1 dp then
+      -code1 = dbx_code1
+      -code2 = dbx_code2
+      -regid = regid
+      -regdb = regdb
+      if $dbxread(-regdb, -regid, -code1, -code2, dbx-string) = 0 then
+         $parsem(dbx-string, 1, "|", , d-objinfo, d-txpinfo)
+         objinfo[] = draft.decode(d-objinfo)[]
+         txpinfo[] = draft.decode(d-txpinfo)[]
+      endif
+   endif
+goback
+
+_LOADDST:
+
+goback
+
+end uhp_document
+
+%include inc_GetParm
+%include inc_GetOption
+%include inc_uhpOption
+%include inc_uhp
+
+dynamic function draft.encode(array[]) is x
+array[]     is x     'array to encode
+string      is x     'encoded string
+(void)$putds(array[],string,"`")
+draft.encode = string + "~"
+end draft.encode
+
+dynamic function draft.decode(string)[,] is x
+string      is x
+a1[]        is x
+'a2[]        is x
+'array[,]     is x
+i           is b
+(void)$getds(a1[], string, "~")
+i = 0
+do while i++ < $maxarray(a1[])
+   (void)$getds(draft.decode[i],a1[i],"`")
+enddo
+end draft.decode
